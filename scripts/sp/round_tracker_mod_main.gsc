@@ -2,6 +2,25 @@ main()
 {
 	level.round_tracker_file_path = "scriptdata/round_tracker/" + getDvar( "mapname" ) + "/" + getDvar( "net_port" ) + ".txt";
 	level thread watch_round_change();
+	level thread wait_for_first_player();
+}
+
+wait_for_first_player()
+{
+	level waittill( "connected", player );
+	level.time_passed_since_first_player = 0;
+	level thread track_time();
+}
+
+track_time()
+{
+	level endon( "end_game" );
+	level endon( "intermission" );
+	while ( true )
+	{
+		wait 1;
+		level.time_passed_since_first_player++;
+	}
 }
 
 watch_round_change()
@@ -29,7 +48,7 @@ display_previous_record_message()
 {
 	level endon( "end_game" );
 	level endon( "intermission" );	
-	display_record_delay = 300;
+	display_record_delay = 10;
 	while ( true )
 	{
 		for ( i = 0; i < display_record_delay; i++ )
@@ -59,17 +78,40 @@ display_previous_record_message()
 		if ( message != "" )
 		{
 			cmdExec( "say " + message );
+			cmdExec( "say " + "^4 time: " + to_mins( int( record_data[ "time" ] ) ) );
 		}
 	}
 }
 
+get_name_for_map()
+{
+	mapname = getDvar( "mapname" );
+	switch ( mapname )
+	{
+		case "nazi_zombie_prototype":
+			return "Nacht der Untoten";
+		case "nazi_zombie_asylum":
+			return "Verruckt";
+		case "nazi_zombie_sumpf":
+			return "Shi no Numa";
+		case "nazi_zombie_factory":
+			return "Der Riese";
+		default:
+			if ( isDefined( level.round_tracker_localized_names[ mapname ] ) )
+			{
+				return level.round_tracker_localized_names[ mapname ];
+			}
+			break;
+	}
+	return mapname;
+}
+
 get_current_record_data()
 {
-	round = 0;
-	player_names = [];
 	data = [];
 	data[ "round" ] = 0;
-	data[ "player_names" ] = player_names;
+	data[ "player_names" ] = [];
+	data[ "time" ] = 0;
 	buffer = fileRead( level.round_tracker_file_path );
 	if ( !isDefined( buffer ) || buffer == "" )
 	{
@@ -89,6 +131,7 @@ get_current_record_data()
 		{
 			data[ "player_names" ] = strTok( sub_tokens[ 1 ], "|" );
 			data[ "round" ] = int( sub_tokens[ 2 ] );	
+			data[ "time" ] = int( sub_tokens[ 3 ] );
 			return data;
 		}
 	}
@@ -117,64 +160,94 @@ get_parsed_record_data()
 
 set_current_record_data( round_number, players )
 {
+	if ( players.size <= 0 )
+	{
+		return;
+	}
 	rows = get_parsed_record_data();
-	regenerate_record_data( rows )
+
+	new_row = "";
+
+	player_count_str = players.size + "";
+	players_str = "";
+	for ( i = 0; i < players.size; i++ )
+	{
+		if ( i == ( players.size - 1 ) )
+		{
+			players_str = players_str + players[ i ].playername;
+			break;
+		}
+		players_str = players_str + players[ i ].playername + "|";
+	}
+	round_str = round_number + "";
+	time_str = level.time_passed_since_first_player + "";
+	new_row = player_count_str + "," + players_str + "," + round_str + "," + time_str + "\n";
+	regenerate_record_data( rows, new_row );
 }
 
-regenerate_record_data( rows )
+regenerate_record_data( rows, new_row )
 {
-	file_header = "player_count,players,record\n";
+	file_header = "player_count,players,round,time\n";
 	if ( !isDefined( rows ) )
 	{
-		fileWrite( level.round_tracker_file_path, file_header, "write" );
+		fileWrite( level.round_tracker_file_path, file_header + new_row, "write" );
+		return;
 	}
-	else 
+	unsorted_array = [];
+	for ( i = 0; i < rows.size; i++ )
 	{
-		buffer = "";
-		unsorted_array = [];
-		for ( i = 0; i < rows.size; i++ )
-		{
-			unsorted_array[ i ] = strTok( rows[ i ], "," )[ 0 ];
-		}
-		sorted_array = quickSort( unsorted_array );
+		unsorted_array[ i ] = strTok( rows[ i ], "," )[ 0 ];
+	}
+	sorted_array = quickSort( unsorted_array );
 
-		tries = 30;
-		sorted_rows = [];
-		i = 0;
-		j = 0;
-		player_count = 0;
-		while ( sorted_rows.size < sorted_array.size )
+	tries = 30;
+	sorted_rows = [];
+	i = 0;
+	j = 0;
+	player_count = 0;
+	while ( sorted_rows.size < sorted_array.size )
+	{
+		player_count = int( strTok( rows[ j ], "," )[ 0 ] );
+		if ( player_count == sorted_array[ i ] )
 		{
-			player_count = int( strTok( rows[ j ], "," )[ 0 ] );
-			if ( player_count == sorted_array[ i ] )
-			{
-				sorted_rows[ sorted_rows.size ] = rows[ j ];
-				i++;
-				continue;
-			}
-			j++;
-			if ( j >= rows.size )
-			{
-				j = 0;
-			}
-			tries--;
-			if ( tries <= 0 )
-			{
-				break;
-			}
+			sorted_rows[ sorted_rows.size ] = rows[ j ];
+			i++;
+			continue;
 		}
-		if ( sorted_rows.size <= 0 )
+		j++;
+		if ( j >= rows.size )
 		{
-			fileWrite( level.round_tracker_file_path, file_header, "write" );
+			j = 0;
+		}
+		tries--;
+		if ( tries <= 0 )
+		{
+			break;
 		}
 	}
+	buffer = file_header;
+	player_count_new_row = int( strTok( new_row, "," ) )[ 0 ];
+	for ( i = 0; i < sorted_rows.size; i++ )
+	{
+		player_count_current = int( strTok( rows[ j ], "," )[ 0 ] );
+		if ( player_count_current == player_count_new_row )
+		{
+			buffer = buffer + new_row;
+			continue;
+		}
+		buffer = buffer + sorted_rows[ i ] + "\n";
+	}
+	fileWrite( level.round_tracker_file_path, buffer, "write" );
 }
 
 /*
 Example round_tracker file
 
-player_count,players,record
+player_count,players,round
 3,shadow|enimen|meme,30
+4,ree|knee|bee|key,69
+2,bree|ree,3
+1,JezuzLizard,1
 */
 
 /* 
@@ -200,7 +273,7 @@ quickSortMid(array, start, end, compare_func)
 	k = end;
 
 	if(!IsDefined(compare_func))
-		compare_func = &quickSort_compare;
+		compare_func = ::quickSort_compare;
 	
 	if (end - start >= 1)
 	{
@@ -236,4 +309,45 @@ swap( array, index1, index2 )
 	array[ index1 ] = array[ index2 ];
 	array[ index2 ] = temp;
 	return array;
+}
+
+to_mins( seconds )
+{
+	hours = 0; 
+	minutes = 0; 
+	
+	if( seconds > 59 )
+	{
+		minutes = int( seconds / 60 );
+
+		seconds = int( seconds * 1000 ) % ( 60 * 1000 );
+		seconds = seconds * 0.001; 
+
+		if( minutes > 59 )
+		{
+			hours = int( minutes / 60 );
+			minutes = int( minutes * 1000 ) % ( 60 * 1000 );
+			minutes = minutes * 0.001; 		
+		}
+	}
+
+	if( hours < 10 )
+	{
+		hours = "0" + hours; 
+	}
+
+	if( minutes < 10 )
+	{
+		minutes = "0" + minutes; 
+	}
+
+	seconds = Int( seconds ); 
+	if( seconds < 10 )
+	{
+		seconds = "0" + seconds; 
+	}
+
+	combined = "" + hours  + ":" + minutes  + ":" + seconds; 
+
+	return combined; 
 }
