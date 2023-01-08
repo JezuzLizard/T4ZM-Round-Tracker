@@ -3,6 +3,24 @@ main()
 	level.round_tracker_file_path = "scriptdata/round_tracker/" + getDvar( "mapname" ) + "/" + getDvar( "net_port" ) + ".txt";
 	level thread watch_round_change();
 	level thread wait_for_first_player();
+	if ( getDvar( "round_tracker_lock_server_on_high_round" ) == "" )
+	{
+		setDvar( "round_tracker_lock_server_on_high_round", 0 );
+	}
+	if ( getDvar( "round_tracker_server_lock_threshold" ) == "" )
+	{
+		setDvar( "round_tracker_server_lock_threshold", -1 );
+	}
+	if ( getDvar( "round_tracker_record_message_delay" ) == "" )
+	{
+		setDvar( "round_tracker_record_message_delay", 240 );
+	}
+	//Automatically clear the password if we lock the server at high rounds
+	lock_server_at_high_round = getDvarInt( "round_tracker_lock_server_on_high_round" );
+	if ( lock_server_at_high_round )
+	{
+		setDvar( "g_password", "" );
+	}
 }
 
 wait_for_first_player()
@@ -11,6 +29,48 @@ wait_for_first_player()
 	level.time_passed_since_first_player = 0;
 	level thread track_time();
 	level thread display_previous_record_message();
+	level thread lock_server_at_high_round();
+}
+
+lock_server_at_high_round()
+{
+	level endon( "end_game" );
+	level endon( "intermission" );
+	if ( getDvarInt( "round_tracker_server_lock_threshold" ) <= 0 )
+	{
+		return;
+	}
+	while ( !isDefined( level.round_number ) )
+	{
+		wait 1;
+	}
+	while ( true )
+	{
+		if ( level.round_number >= getDvarInt( "round_tracker_server_lock_threshold" ) )
+		{
+			break;
+		}
+		wait 1;
+	}
+
+	pin = generate_random_password();
+	setDvar( "g_password", pin );
+
+	while ( true )
+	{
+		cmdExec( "say " + " Server is now locked! Use password " + pin + " in the console to rejoin if you disconnect" );
+		wait 600;
+	}
+}
+
+generate_random_password()
+{
+	str = "";
+	for ( i = 0; i < 4; i++ )
+	{
+		str = str + randomInt( 10 );
+	}
+	return str;
 }
 
 track_time()
@@ -28,14 +88,16 @@ watch_round_change()
 {
 	level endon( "end_game" );
 	level endon( "intermission" );
+	level waittill( "new_zombie_round", current_round );
 	while ( true )
 	{
 		level waittill( "new_zombie_round", current_round );
-		current_record_round = get_current_record_data()[ "round" ];
-		printConsole( "current_record_round: " + current_record_round + " player_count: " + getPlayers().size );
-		if ( ( current_round + 1 ) > current_record_round )
+		record_data = get_current_record_data();
+		//printConsole( "current_record_round: " + current_record_round + " player_count: " + getPlayers().size );
+		if ( current_round > record_data[ "round" ] )
 		{
 			set_current_record_data( current_round, getPlayers() );
+			cmdExec( "say " + "New record of ^7" + current_round + " set! " + " Time taken: " + record_data[ "time" ] );
 		}
 	}
 }
@@ -49,9 +111,9 @@ display_previous_record_message()
 {
 	level endon( "end_game" );
 	level endon( "intermission" );	
-	display_record_delay = 10;
 	while ( true )
 	{
+		display_record_delay = getDvarInt( "round_tracker_record_message_delay" );
 		for ( i = 0; i < display_record_delay; i++ )
 			wait 1;
 		record_data = get_current_record_data();
@@ -64,23 +126,23 @@ display_previous_record_message()
 		message = "";
 		if ( player_names.size == 1 )
 		{
-			message = "Current record for ^5solo ^7on ^1" + get_name_for_map() + "^7 is held by ^5" + player_names[ 0 ];
+			message = "Record for ^5solo ^7is ^5" + record_data[ "round" ] + "^7 held by ^5" + player_names[ 0 ];
 		}
 		else 
 		{
 			for ( i = 0; i < player_names.size - 1; i++ )
 			{
-				players_str = players_str + player_names[ i ];
+				players_str = players_str + player_names[ i ] + ",";
 			}
-			players_str = players_str + "^7 and ^5" + player_names[ i ];
+			players_str = players_str + "^7and ^5" + player_names[ i ];
 
-			message = "Current record for ^5" + player_names.size + " player ^7 on ^5" + get_name_for_map() + "^7 is held by ^5" + players_str;
+			message = "Record for ^5" + player_names.size + " player ^7is ^5" + record_data[ "round" ] + "^7 held by ^5" + players_str;
 		}
 		if ( message != "" )
 		{
 			cmdExec( "say " + message );
 			wait 0.5;
-			cmdExec( "say " + "^7 Time taken: ^5" + to_mins( record_data[ "time" ] ) );
+			cmdExec( "say " + "^7Time taken: ^5" + to_mins( record_data[ "time" ] ) );
 		}
 	}
 }
@@ -155,7 +217,7 @@ get_parsed_record_data()
 	array = [];
 	for ( i = 1; i < rows.size; i++ )
 	{
-		printConsole( "get_parsed_record_data() rows[ " + i + " ]: " + rows[ i ] );
+		//printConsole( "get_parsed_record_data() rows[ " + i + " ]: " + rows[ i ] );
 		array[ i - 1 ] = rows[ i ];
 	}
 	return array;
@@ -185,7 +247,7 @@ set_current_record_data( round_number, players )
 	round_str = round_number + "";
 	time_str = level.time_passed_since_first_player + "";
 	new_row = player_count_str + "," + players_str + "," + round_str + "," + time_str;
-	printConsole( "set_current_round_data() new_row: " + new_row );
+	//printConsole( "set_current_round_data() new_row: " + new_row );
 	regenerate_record_data( rows, new_row );
 }
 
@@ -209,7 +271,7 @@ regenerate_record_data( rows, new_row )
 		{
 			replaced_old_row = true;
 			temp_rows[ temp_rows.size ] = new_row;
-			printConsole( "replacing old row" );
+			//printConsole( "replacing old row" );
 			continue;
 		}
 		temp_rows[ temp_rows.size ] = rows[ i ];
@@ -217,7 +279,7 @@ regenerate_record_data( rows, new_row )
 	rows = temp_rows;
 	if ( !replaced_old_row )
 	{
-		printConsole( "adding new row to the rows" );
+		//printConsole( "adding new row to the rows" );
 		rows[ rows.size ] = new_row;
 		unsorted_array[ unsorted_array.size ] = player_count_new_row;
 	}
@@ -229,7 +291,7 @@ regenerate_record_data( rows, new_row )
 	{
 		buffer = buffer + sorted_rows[ i ] + "\n";
 	}
-	printConsole( "buffer: " + buffer );
+	//printConsole( "buffer: " + buffer );
 	fileWrite( level.round_tracker_file_path, buffer, "write" );
 }
 
