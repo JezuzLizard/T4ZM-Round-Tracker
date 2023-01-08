@@ -10,6 +10,7 @@ wait_for_first_player()
 	level waittill( "connected", player );
 	level.time_passed_since_first_player = 0;
 	level thread track_time();
+	level thread display_previous_record_message();
 }
 
 track_time()
@@ -27,14 +28,14 @@ watch_round_change()
 {
 	level endon( "end_game" );
 	level endon( "intermission" );
-	current_record_round = get_current_record_data()[ "round" ];
 	while ( true )
 	{
 		level waittill( "new_zombie_round", current_round );
-		if ( current_round >= current_record_round )
+		current_record_round = get_current_record_data()[ "round" ];
+		printConsole( "current_record_round: " + current_record_round + " player_count: " + getPlayers().size );
+		if ( ( current_round + 1 ) > current_record_round )
 		{
 			set_current_record_data( current_round, getPlayers() );
-			current_record_round = current_round;
 		}
 	}
 }
@@ -63,7 +64,7 @@ display_previous_record_message()
 		message = "";
 		if ( player_names.size == 1 )
 		{
-			message = "Current record for solo on ^1" + get_name_for_map() + "^7 is held by ^4" + player_names[ 0 ];
+			message = "Current record for ^5solo ^7on ^1" + get_name_for_map() + "^7 is held by ^5" + player_names[ 0 ];
 		}
 		else 
 		{
@@ -71,14 +72,15 @@ display_previous_record_message()
 			{
 				players_str = players_str + player_names[ i ];
 			}
-			players_str = players_str + "^7 and ^4" + player_names[ i + 1 ];
+			players_str = players_str + "^7 and ^5" + player_names[ i ];
 
-			message = "Current record for " + player_names.size + " player on ^4" + get_name_for_map() + "^7 is held by ^4" + players_str;
+			message = "Current record for ^5" + player_names.size + " player ^7 on ^5" + get_name_for_map() + "^7 is held by ^5" + players_str;
 		}
 		if ( message != "" )
 		{
 			cmdExec( "say " + message );
-			cmdExec( "say " + "^4 time: " + to_mins( int( record_data[ "time" ] ) ) );
+			wait 0.5;
+			cmdExec( "say " + "^7 Time taken: ^5" + to_mins( record_data[ "time" ] ) );
 		}
 	}
 }
@@ -153,6 +155,7 @@ get_parsed_record_data()
 	array = [];
 	for ( i = 1; i < rows.size; i++ )
 	{
+		printConsole( "get_parsed_record_data() rows[ " + i + " ]: " + rows[ i ] );
 		array[ i - 1 ] = rows[ i ];
 	}
 	return array;
@@ -181,7 +184,8 @@ set_current_record_data( round_number, players )
 	}
 	round_str = round_number + "";
 	time_str = level.time_passed_since_first_player + "";
-	new_row = player_count_str + "," + players_str + "," + round_str + "," + time_str + "\n";
+	new_row = player_count_str + "," + players_str + "," + round_str + "," + time_str;
+	printConsole( "set_current_round_data() new_row: " + new_row );
 	regenerate_record_data( rows, new_row );
 }
 
@@ -194,50 +198,64 @@ regenerate_record_data( rows, new_row )
 		return;
 	}
 	unsorted_array = [];
+	player_count_new_row = int( strTok( new_row, "," )[ 0 ] );
+	replaced_old_row = false;
+	temp_rows = [];
 	for ( i = 0; i < rows.size; i++ )
 	{
-		unsorted_array[ i ] = strTok( rows[ i ], "," )[ 0 ];
+		player_count = int( strTok( rows[ i ], "," )[ 0 ] );
+		unsorted_array[ unsorted_array.size ] = player_count;
+		if ( player_count == player_count_new_row )
+		{
+			replaced_old_row = true;
+			temp_rows[ temp_rows.size ] = new_row;
+			printConsole( "replacing old row" );
+			continue;
+		}
+		temp_rows[ temp_rows.size ] = rows[ i ];
+	}
+	rows = temp_rows;
+	if ( !replaced_old_row )
+	{
+		printConsole( "adding new row to the rows" );
+		rows[ rows.size ] = new_row;
+		unsorted_array[ unsorted_array.size ] = player_count_new_row;
 	}
 	sorted_array = quickSort( unsorted_array );
+	sorted_rows = sort_rows_based_on_index_array( rows, sorted_array, new_row );
 
-	tries = 30;
+	buffer = file_header;
+	for ( i = 0; i < sorted_rows.size; i++ )
+	{
+		buffer = buffer + sorted_rows[ i ] + "\n";
+	}
+	printConsole( "buffer: " + buffer );
+	fileWrite( level.round_tracker_file_path, buffer, "write" );
+}
+
+sort_rows_based_on_index_array( unsorted_rows, sorted_array, new_row )
+{
 	sorted_rows = [];
 	i = 0;
 	j = 0;
 	player_count = 0;
+	player_count_new_row = int( strTok( new_row, "," )[ 0 ] );
 	while ( sorted_rows.size < sorted_array.size )
 	{
-		player_count = int( strTok( rows[ j ], "," )[ 0 ] );
+		player_count = int( strTok( unsorted_rows[ j ], "," )[ 0 ] );
 		if ( player_count == sorted_array[ i ] )
 		{
-			sorted_rows[ sorted_rows.size ] = rows[ j ];
+			sorted_rows[ sorted_rows.size ] = unsorted_rows[ j ];
 			i++;
 			continue;
 		}
 		j++;
-		if ( j >= rows.size )
+		if ( j >= unsorted_rows.size )
 		{
 			j = 0;
 		}
-		tries--;
-		if ( tries <= 0 )
-		{
-			break;
-		}
 	}
-	buffer = file_header;
-	player_count_new_row = int( strTok( new_row, "," ) )[ 0 ];
-	for ( i = 0; i < sorted_rows.size; i++ )
-	{
-		player_count_current = int( strTok( rows[ j ], "," )[ 0 ] );
-		if ( player_count_current == player_count_new_row )
-		{
-			buffer = buffer + new_row;
-			continue;
-		}
-		buffer = buffer + sorted_rows[ i ] + "\n";
-	}
-	fileWrite( level.round_tracker_file_path, buffer, "write" );
+	return sorted_rows;
 }
 
 /*
