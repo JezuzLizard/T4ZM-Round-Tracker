@@ -103,7 +103,12 @@ watch_round_change()
 		level waittill( "new_zombie_round", current_round );
 		players = getPlayers();
 		record_data = get_current_record_data( players );
-		if ( !isDefined( record_data ) || record_data[ "round" ] >= current_round )
+		if ( !isDefined( record_data ) )
+		{
+			set_current_record_data( current_round, players );
+			continue;
+		}
+		if ( record_data[ "round" ] >= current_round )
 		{
 			continue;
 		}
@@ -246,6 +251,8 @@ parse_csv()
 	buffer = fileRead( level.round_tracker_file_path );
 	if ( !isDefined( buffer ) || buffer == "" )
 	{
+		file_header = "player_count,players,round,time\n";
+		fileWrite( level.round_tracker_file_path, file_header, "write" );
 		return undefined;
 	}
 	rows = strTok( buffer, "\n" );
@@ -269,6 +276,12 @@ parse_csv()
 
 insert_key_in_csv_keys( keys, key )
 {
+	if ( !isDefined( keys ) )
+	{
+		keys = [];
+		keys[ 0 ] = key;
+		return keys;
+	}
 	replaced_key = false;
 	for ( i = 0; i < keys.size; i++ )
 	{
@@ -290,11 +303,6 @@ insert_key_in_csv_keys( keys, key )
 write_csv( keys )
 {
 	file_header = "player_count,players,round,time\n";
-	if ( !isDefined( keys ) || keys.size <= 0 )
-	{
-		fileWrite( level.round_tracker_file_path, file_header, "write" );
-		return;
-	}
 	row = "";
 	buffer = file_header;
 	for ( i = 0; i < keys.size; i++ )
