@@ -21,6 +21,10 @@ main()
 	{
 		setDvar( "g_password", "" );
 	}
+	level.newline_characters = [];
+	level.newline_characters[ "\n" ] = true;
+	level.newline_characters[ "\r" ] = true;
+	level.newline_characters[ "\r\n" ] = true;
 }
 
 wait_for_first_player()
@@ -30,6 +34,7 @@ wait_for_first_player()
 	level thread track_time();
 	level thread display_previous_record_message();
 	level thread lock_server_at_high_round();
+	level thread watch_intermission();
 }
 
 lock_server_at_high_round()
@@ -55,7 +60,11 @@ lock_server_at_high_round()
 
 	pin = generate_random_password();
 	setDvar( "g_password", pin );
-
+	players = getPlayers();
+	for ( i = 0; i < players.size; i++ )
+	{
+		players[ i ] setClientDvar( "password", pin );
+	}
 	while ( true )
 	{
 		cmdExec( "say " + " Server is now locked! Use password " + pin + " in the console to rejoin if you disconnect" );
@@ -92,19 +101,27 @@ watch_round_change()
 	while ( true )
 	{
 		level waittill( "new_zombie_round", current_round );
-		record_data = get_current_record_data();
-		//printConsole( "current_record_round: " + current_record_round + " player_count: " + getPlayers().size );
-		if ( current_round > record_data[ "round" ] )
+		players = getPlayers();
+		record_data = get_current_record_data( players );
+		if ( !isDefined( record_data ) || record_data[ "round" ] >= current_round )
 		{
-			set_current_record_data( current_round, getPlayers() );
-			cmdExec( "say " + "New record of ^7" + current_round + " set! " + " Time taken: " + record_data[ "time" ] );
+			continue;
 		}
+		//printConsole( "current_record_round: " + current_record_round + " player_count: " + getPlayers().size );
+		set_current_record_data( current_round, players );
+		//record_data = get_current_record_data();
+		//cmdExec( "say " + "New record of ^5" + current_round + "^7 set! " + " Time taken: " + to_mins(  record_data[ "time" ] ) );
 	}
 }
 
 watch_intermission()
 {
 	level waittill( "intermission" );
+	lock_server_at_high_round = getDvarInt( "round_tracker_lock_server_on_high_round" );
+	if ( lock_server_at_high_round )
+	{
+		setDvar( "g_password", "" );
+	}
 }
 
 display_previous_record_message()
@@ -116,12 +133,13 @@ display_previous_record_message()
 		display_record_delay = getDvarInt( "round_tracker_record_message_delay" );
 		for ( i = 0; i < display_record_delay; i++ )
 			wait 1;
-		record_data = get_current_record_data();
-		if ( record_data[ "round" ] <= 0 )
+		players = getPlayers();
+		record_data = get_current_record_data( players );
+		if ( !isDefined( record_data ) || record_data[ "round" ] <= 0 )
 		{
 			continue;
 		}
-		player_names = record_data[ "player_names" ];
+		player_names = record_data[ "players" ];
 		players_str = "";
 		message = "";
 		if ( player_names.size == 1 )
@@ -132,7 +150,7 @@ display_previous_record_message()
 		{
 			for ( i = 0; i < player_names.size - 1; i++ )
 			{
-				players_str = players_str + player_names[ i ] + ",";
+				players_str = players_str + player_names[ i ] + "^7, ^5";
 			}
 			players_str = players_str + "^7and ^5" + player_names[ i ];
 
@@ -170,57 +188,22 @@ get_name_for_map()
 	return mapname;
 }
 
-get_current_record_data()
+get_current_record_data( players )
 {
-	data = [];
-	data[ "round" ] = 0;
-	data[ "player_names" ] = [];
-	data[ "time" ] = 0;
-	buffer = fileRead( level.round_tracker_file_path );
-	if ( !isDefined( buffer ) || buffer == "" )
+	keys = parse_csv();
+	if ( !isDefined( keys ) )
 	{
-		return data;
+		return undefined;
 	}
-	rows = strTok( buffer, "\n" );
-	if ( rows.size <= 1 )
+	cur_player_count = players.size;
+	for ( i = 0; i < keys.size; i++ )
 	{
-		return data;
-	}
-	cur_player_count = getPlayers().size;
-	for ( i = 1; i < rows.size; i++ )
-	{
-		sub_tokens = strTok( rows[ i ], "," );
-
-		if ( int( sub_tokens[ 0 ] ) == cur_player_count )
+		if ( keys[ i ][ "player_count" ] == cur_player_count )
 		{
-			data[ "player_names" ] = strTok( sub_tokens[ 1 ], "|" );
-			data[ "round" ] = int( sub_tokens[ 2 ] );	
-			data[ "time" ] = int( sub_tokens[ 3 ] );
-			return data;
+			return keys[ i ];
 		}
 	}
-	return data;
-}
-
-get_parsed_record_data()
-{
-	buffer = fileRead( level.round_tracker_file_path );
-	if ( !isDefined( buffer ) || buffer == "" )
-	{
-		return undefined;
-	}
-	rows = strTok( buffer, "\n" );
-	if ( rows.size <= 1 )
-	{
-		return undefined;
-	}
-	array = [];
-	for ( i = 1; i < rows.size; i++ )
-	{
-		//printConsole( "get_parsed_record_data() rows[ " + i + " ]: " + rows[ i ] );
-		array[ i - 1 ] = rows[ i ];
-	}
-	return array;
+	return undefined;
 }
 
 set_current_record_data( round_number, players )
@@ -229,11 +212,10 @@ set_current_record_data( round_number, players )
 	{
 		return;
 	}
-	rows = get_parsed_record_data();
+	keys = parse_csv();
 
-	new_row = "";
-
-	player_count_str = players.size + "";
+	new_key = [];
+	new_key[ "player_count" ] = players.size;
 	players_str = "";
 	for ( i = 0; i < players.size; i++ )
 	{
@@ -244,80 +226,97 @@ set_current_record_data( round_number, players )
 		}
 		players_str = players_str + players[ i ].playername + "|";
 	}
-	round_str = round_number + "";
-	time_str = level.time_passed_since_first_player + "";
-	new_row = player_count_str + "," + players_str + "," + round_str + "," + time_str;
+	players_array = [];
+	for ( i = 0; i < players.size; i++ )
+	{
+		players_array[ i ] = players[ i ].playername;
+	}
+	new_key[ "players" ] = players_array;
+	new_key[ "round" ] = round_number;
+	new_key[ "time" ] = level.time_passed_since_first_player;
+
+	keys = insert_key_in_csv_keys( keys, new_key );
+	logprint( "New record set! " + new_key[ "player_count" ] + "," + players_str + "," + new_key[ "round" ] + "," + new_key[ "time" ] + "\n" );
 	//printConsole( "set_current_round_data() new_row: " + new_row );
-	regenerate_record_data( rows, new_row );
+	write_csv( keys );
 }
 
-regenerate_record_data( rows, new_row )
+parse_csv()
+{
+	buffer = fileRead( level.round_tracker_file_path );
+	if ( !isDefined( buffer ) || buffer == "" )
+	{
+		return undefined;
+	}
+	rows = strTok( buffer, "\n" );
+	if ( rows.size <= 1 )
+	{
+		return undefined;
+	}
+	keys = [];
+
+	for ( i = 1; i < rows.size; i++ )
+	{
+		tokens = strTok( rows[ i ], "," );
+		keys[ keys.size ] = [];
+		keys[ keys.size - 1 ][ "player_count" ] = int( tokens[ 0 ] );
+		keys[ keys.size - 1 ][ "players" ] = strTok( tokens[ 1 ], "|" );
+		keys[ keys.size - 1 ][ "round" ] = int( tokens[ 2 ] );
+		keys[ keys.size - 1 ][ "time" ] = int( tokens[ 3 ] );
+	}
+	return keys;
+}
+
+insert_key_in_csv_keys( keys, key )
+{
+	replaced_key = false;
+	for ( i = 0; i < keys.size; i++ )
+	{
+		if ( keys[ i ][ "player_count" ] == key[ "player_count" ] )
+		{
+			replaced_key = true;
+			keys[ i ] = key;
+			break;
+		}
+	}
+
+	if ( !replaced_key )
+	{
+		keys[ keys.size ] = key;
+	}
+	return keys;
+}
+
+write_csv( keys )
 {
 	file_header = "player_count,players,round,time\n";
-	if ( !isDefined( rows ) )
+	if ( !isDefined( keys ) || keys.size <= 0 )
 	{
-		fileWrite( level.round_tracker_file_path, file_header + new_row, "write" );
+		fileWrite( level.round_tracker_file_path, file_header, "write" );
 		return;
 	}
-	unsorted_array = [];
-	player_count_new_row = int( strTok( new_row, "," )[ 0 ] );
-	replaced_old_row = false;
-	temp_rows = [];
-	for ( i = 0; i < rows.size; i++ )
-	{
-		player_count = int( strTok( rows[ i ], "," )[ 0 ] );
-		unsorted_array[ unsorted_array.size ] = player_count;
-		if ( player_count == player_count_new_row )
-		{
-			replaced_old_row = true;
-			temp_rows[ temp_rows.size ] = new_row;
-			//printConsole( "replacing old row" );
-			continue;
-		}
-		temp_rows[ temp_rows.size ] = rows[ i ];
-	}
-	rows = temp_rows;
-	if ( !replaced_old_row )
-	{
-		//printConsole( "adding new row to the rows" );
-		rows[ rows.size ] = new_row;
-		unsorted_array[ unsorted_array.size ] = player_count_new_row;
-	}
-	sorted_array = quickSort( unsorted_array );
-	sorted_rows = sort_rows_based_on_index_array( rows, sorted_array, new_row );
-
+	row = "";
 	buffer = file_header;
-	for ( i = 0; i < sorted_rows.size; i++ )
+	for ( i = 0; i < keys.size; i++ )
 	{
-		buffer = buffer + sorted_rows[ i ] + "\n";
+		row = "";
+		row = row + keys[ i ][ "player_count" ] + ",";
+		players_str = "";
+		for ( j = 0; j < keys[ i ][ "players" ].size; j++ )
+		{
+			if ( j == ( keys[ i ][ "players" ].size - 1 ) )
+			{
+				players_str = players_str + keys[ i ][ "players" ][ j ];
+				break;
+			}
+			players_str = players_str + keys[ i ][ "players" ][ j ] + "|";
+		}
+		row = row + players_str + ",";
+		row = row + keys[ i ][ "round" ] + ",";
+		row = row + keys[ i ][ "time" ];
+		buffer = buffer + row + "\n";
 	}
-	//printConsole( "buffer: " + buffer );
 	fileWrite( level.round_tracker_file_path, buffer, "write" );
-}
-
-sort_rows_based_on_index_array( unsorted_rows, sorted_array, new_row )
-{
-	sorted_rows = [];
-	i = 0;
-	j = 0;
-	player_count = 0;
-	player_count_new_row = int( strTok( new_row, "," )[ 0 ] );
-	while ( sorted_rows.size < sorted_array.size )
-	{
-		player_count = int( strTok( unsorted_rows[ j ], "," )[ 0 ] );
-		if ( player_count == sorted_array[ i ] )
-		{
-			sorted_rows[ sorted_rows.size ] = unsorted_rows[ j ];
-			i++;
-			continue;
-		}
-		j++;
-		if ( j >= unsorted_rows.size )
-		{
-			j = 0;
-		}
-	}
-	return sorted_rows;
 }
 
 /*
@@ -342,6 +341,7 @@ Color codes:
 // ^7 White                                     //
 */
 
+/*
 quickSort(array, compare_func) 
 {
 	return quickSortMid(array, 0, array.size -1, compare_func);     
@@ -390,6 +390,7 @@ swap( array, index1, index2 )
 	array[ index2 ] = temp;
 	return array;
 }
+*/
 
 to_mins( seconds )
 {
